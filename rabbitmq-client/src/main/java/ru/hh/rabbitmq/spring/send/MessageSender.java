@@ -1,5 +1,7 @@
 package ru.hh.rabbitmq.spring.send;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import javax.annotation.Nullable;
@@ -11,6 +13,7 @@ import ru.hh.nab.metrics.StatsDSender;
 import ru.hh.nab.metrics.Tag;
 
 public class MessageSender {
+
   private final RabbitTemplate template;
   @Nullable
   private final Counters publishedCounters;
@@ -54,6 +57,10 @@ public class MessageSender {
       message = correlated.getMessage();
     }
 
+    String exchange = Optional.ofNullable(destination).map(Destination::getExchange).orElseGet(template::getExchange);
+    String routingKey = Optional.ofNullable(destination).map(Destination::getRoutingKey).orElseGet(template::getRoutingKey);
+    String host = template.getConnectionFactory().getHost() + ":" + template.getConnectionFactory().getPort();
+
     try {
       if (destination != null && destination.getRoutingKey() != null) {
           template.convertAndSend(destination.getExchange(), destination.getRoutingKey(), message, correlationData);
@@ -62,12 +69,13 @@ public class MessageSender {
       }
     } catch (AmqpException e) {
       if (errorsCounters != null) {
-        addValueToCountersWithDestinationTag(errorsCounters, destination);
+        addValueToCountersWithDestinationTag(errorsCounters, exchange, routingKey, host);
       }
       throw e;
     } finally {
       if (publishedCounters != null) {
-        addValueToCountersWithDestinationTag(publishedCounters, destination);
+        // deliberately not sending exchange and host to avoid overloading okmeter
+        addValueToCountersWithDestinationTag(publishedCounters, null, routingKey, null);
       }
     }
   }
@@ -76,8 +84,12 @@ public class MessageSender {
     return template;
   }
 
-  private static void addValueToCountersWithDestinationTag(Counters counters, Destination destination) {
-    String routingKey = Optional.ofNullable(destination).map(Destination::getRoutingKey).orElse("unknown");
-    counters.add(1, new Tag("routing_key", routingKey));
+  private static void addValueToCountersWithDestinationTag(Counters counters, String exchange, String routingKey, String host) {
+    List<Tag> tags = new ArrayList<>();
+    Optional.ofNullable(exchange).map(v -> new Tag("exchange", v)).ifPresent(tags::add);
+    Optional.ofNullable(host).map(v -> new Tag("host", v)).ifPresent(tags::add);
+    tags.add(new Tag("routing_key", Optional.ofNullable(routingKey).orElse("unknown")));
+
+    counters.add(1, tags.toArray(new Tag[0]));
   }
 }
