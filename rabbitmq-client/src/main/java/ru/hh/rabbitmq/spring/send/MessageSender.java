@@ -19,6 +19,8 @@ public class MessageSender {
   private final Counters publishedCounters;
   @Nullable
   private final Counters errorsCounters;
+  @Nullable
+  private final Tag app;
 
   public MessageSender(RabbitTemplate template,
                 @Nullable
@@ -29,15 +31,17 @@ public class MessageSender {
     if (statsDSender != null) {
       publishedCounters = new Counters(20);
       errorsCounters = new Counters(20);
+      app = new Tag("app", serviceName);
 
       statsDSender.sendPeriodically(() -> {
-        statsDSender.sendCounters(serviceName + ".rabbit.publishers.messages", publishedCounters);
-        statsDSender.sendCounters(serviceName + ".rabbit.publishers.errors", errorsCounters);
+        statsDSender.sendCounters("rabbit.publishers.messages", publishedCounters);
+        statsDSender.sendCounters("rabbit.publishers.errors", errorsCounters);
       });
 
     } else {
       publishedCounters = null;
       errorsCounters = null;
+      app = null;
     }
   }
 
@@ -69,13 +73,13 @@ public class MessageSender {
       }
     } catch (AmqpException e) {
       if (errorsCounters != null) {
-        addValueToCountersWithDestinationTag(errorsCounters, exchange, routingKey, host);
+        addValueToCountersWithDestinationTag(errorsCounters, app, exchange, routingKey, host);
       }
       throw e;
     } finally {
       if (publishedCounters != null) {
         // deliberately not sending exchange and host to avoid overloading okmeter
-        addValueToCountersWithDestinationTag(publishedCounters, null, routingKey, null);
+        addValueToCountersWithDestinationTag(publishedCounters, app, null, routingKey, null);
       }
     }
   }
@@ -84,8 +88,9 @@ public class MessageSender {
     return template;
   }
 
-  private static void addValueToCountersWithDestinationTag(Counters counters, String exchange, String routingKey, String host) {
+  private static void addValueToCountersWithDestinationTag(Counters counters, Tag app, String exchange, String routingKey, String host) {
     List<Tag> tags = new ArrayList<>();
+    tags.add(app);
     Optional.ofNullable(exchange).map(v -> new Tag("exchange", v)).ifPresent(tags::add);
     Optional.ofNullable(host).map(v -> new Tag("host", v)).ifPresent(tags::add);
     tags.add(new Tag("routing_key", Optional.ofNullable(routingKey).orElse("unknown")));
